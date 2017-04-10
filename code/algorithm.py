@@ -467,12 +467,12 @@ def nlm(target, f_heap, h):
     x = np.clip(f_k[:,:,:,0],0,target.shape[0]-1)
     y = np.clip(f_k[:,:,:,1],0,target.shape[1]-1)
     rec_source = target[x, y]
-    g = (-1) * (np.sqrt(D_k)/(h**2))
-    h = np.exp(g)
-    i = np.sum(h, axis = 0)
-    j = h/i
+    temp = (-1) * (np.sqrt(D_k)/(h**2))
+    expt = np.exp(temp)
+    Zi = np.sum(expt, axis = 0)
+    Wij = expt/Zi
     for m in range(3):
-        rec_source[:,:,:,m] = rec_source[:,:,:,m] * j
+        rec_source[:,:,:,m] = rec_source[:,:,:,m] * Wij
     denoised = np.sum(rec_source, axis = 0)
     #############################################
 
