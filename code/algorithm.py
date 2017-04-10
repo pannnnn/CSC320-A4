@@ -96,6 +96,8 @@ def propagation_and_random_search_k(source_patches, target_patches,
     #################################################
     row = source_patches.shape[0]
     column = source_patches.shape[1]
+    offset_num = len(f_heap[0][0])
+    # f_k ,D_k = NNF_heap_to_NNF_matrix(f_heap)
 
     # calculate how many random search offset we need
     i = 0
@@ -129,7 +131,6 @@ def propagation_and_random_search_k(source_patches, target_patches,
                 x = np.arange(column-1, column-1-diagonal_length , -1)
                 y = np.arange(row-diagonal_length,row,1)
             diagonal_index = np.dstack((y, x)).reshape((diagonal_length,2))
-
             # Propogation
             if propagation_enabled:
                 # if first pixel of the image, nothing to compare with
@@ -151,55 +152,83 @@ def propagation_and_random_search_k(source_patches, target_patches,
                 top_neighbor_index[:,1] = temp
 
                 # initialize source image and target image index for density calculation
-                source_window_index = np.stack((diagonal_index, top_neighbor_index, left_neighbor_index), axis = 1)
-                print source_window_index.shape
-                window_f = new_f[source_window_index[:,:,0],source_window_index[:,:,1]]
+                source_window_index = np.stack((diagonal_index, top_neighbor_index, left_neighbor_index), axis = 1).reshape(1,diagonal_length,3,2)
+                source_window_index = np.repeat(source_window_index, offset_num, axis = 0)
+
+                # calculate window_f
+                window_f = np.empty((offset_num,diagonal_length,3,2)).astype('int64')
+                for j in range(diagonal_length):
+                    for k in range(3):
+                        x = source_window_index[0,j,k,0]
+                        y = source_window_index[0,j,k,1]
+                        for l in range(offset_num):
+                            window_f[l,j,k] = f_heap[x][y][l][-1]
                 target_window_index = source_window_index + window_f
                 
+                
                 # clip the index afte adding offset to its boundaries
-                target_window_x = np.clip(target_window_index[:,:,0],0,row-1)
-                target_window_y = np.clip(target_window_index[:,:,1],0,column-1)
-                source_window = source_patches[source_window_index[:,:,0],source_window_index[:,:,1]]
+                target_window_x = np.clip(target_window_index[:,:,:,0],0,row-1)
+                target_window_y = np.clip(target_window_index[:,:,:,1],0,column-1)
+                source_window = source_patches[source_window_index[:,:,:,0],source_window_index[:,:,:,1]]
                 target_window = target_patches[target_window_x,target_window_y]
 
                 # calculate the difference in density of those pixels
-                window_D = np.sum(np.sum((target_window - source_window)**2, axis = 3), axis = 2)
-
-                # update the offset per pixel if better result is found
-                min_index = np.argmin(window_D,axis=1)
-                x = source_window_index[:,0,0]
-                y = source_window_index[:,0,1]
-                new_f[x, y] = window_f[np.arange(diagonal_length),min_index]
+                window_D = np.sum(np.sum((target_window - source_window)**2, axis = 4), axis = 3)
+                for l in range(diagonal_length):
+                    x = diagonal_index[l,0]
+                    y = diagonal_index[l,1]
+                    for m in range(3):
+                      for n in range(offset_num):
+                        candidate = (window_D[n,l,m] * -1, _tiebreaker.next(), window_f[n,l,m])
+                        if tuple(window_f[n,l,m]) not in f_coord_dictionary[x][y]:
+                            f_coord_dictionary[x][y][tuple(window_f[n,l,m])] = 0
+                            heappushpop(f_heap[x][y], candidate)
 
             # Random Search
-            if random_enabled:
+            if False:
                 # store search radius in array_for_random_offset, first spot is center of the search region 
                 j = 1
                 while(j < while_iters+1):
-                        cur_R = np.array([random.uniform(-1, 1), random.uniform(-1, 1)])
+                        cur_R = np.array([np.random.uniform(-1, 1), np.random.uniform(-1, 1)])
                         array_for_random_offset[0,j,:] = w * alpha ** j * cur_R
                         j +=1
 
                 # populate the offset array for comparison
-                source_window_index = np.repeat(diagonal_index.reshape(diagonal_length,1,2), while_iters+1, axis = 1)
-                random_offset = np.repeat(array_for_random_offset, diagonal_length, axis=0)          
-                window_f = random_offset + new_f[source_window_index[:,:,0],source_window_index[:,:,1]]
+                source_window_index = np.repeat(diagonal_index.reshape(diagonal_length,1,2), while_iters+1, axis = 1).reshape(1,diagonal_length,while_iters+1,2)
+                source_window_index = np.repeat(source_window_index, offset_num, axis = 0)
+                random_offset = np.repeat(array_for_random_offset, diagonal_length, axis=0).reshape(1,diagonal_length,while_iters+1,2)
+                random_offset = np.repeat(random_offset, offset_num, axis = 0)
+
+                # print random_offset.shape
+
+                window_f = np.empty((offset_num,diagonal_length,while_iters+1,2)).astype('int64')
+                for j in range(diagonal_length):
+                    for k in range(while_iters+1):
+                        x = source_window_index[0,j,k,0]
+                        y = source_window_index[0,j,k,1]
+                        for l in range(offset_num):
+                            window_f[l,j,k] = f_heap[x][y][l][-1]
+
                 # clip the index afte adding offset to its boundaries
-                target_window_x = np.clip((source_window_index + window_f)[:,:,0],0,row-1)
-                target_window_y = np.clip((source_window_index + window_f)[:,:,1],0,column-1)
+                target_window_x = np.clip((source_window_index + window_f)[:,:,:,0],0,row-1)
+                target_window_y = np.clip((source_window_index + window_f)[:,:,:,1],0,column-1)
                 # correct the offset array such that after adding offset no pixels will potentially cross the 
                 # boundaries
-                window_f[:,:,0] = target_window_x - source_window_index[:,:,0]
-                window_f[:,:,1] = target_window_y - source_window_index[:,:,1]
-                source_window = source_patches[source_window_index[:,:,0],source_window_index[:,:,1]]
+                window_f[:,:,:,0] = target_window_x - source_window_index[:,:,:,0]
+                window_f[:,:,:,1] = target_window_y - source_window_index[:,:,:,1]
+                source_window = source_patches[source_window_index[:,:,:,0],source_window_index[:,:,:,1]]
                 target_window = target_patches[target_window_x,target_window_y]
                 # calculate the difference in density of those pixels
-                window_D = np.sum(np.sum((target_window - source_window)**2, axis = 3), axis = 2)
-                # update the offset per pixel if better result is found
-                min_index = np.argmin(window_D,axis=1)
-                x = source_window_index[:,0,0]
-                y = source_window_index[:,0,1]
-                new_f[x, y] = window_f[np.arange(diagonal_length),min_index]
+                window_D = np.sum(np.sum((target_window - source_window)**2, axis = 4), axis = 3)
+                for l in range(diagonal_length):
+                    x = diagonal_index[l,0]
+                    y = diagonal_index[l,1]
+                    for m in range(while_iters+1):
+                      for n in range(offset_num):
+                        candidate = (window_D[n,l,m] * -1, _tiebreaker.next(), window_f[n,l,m])
+                        if tuple(window_f[n,l,m]) not in f_coord_dictionary[x][y]:
+                            f_coord_dictionary[x][y][tuple(window_f[n,l,m])] = 0
+                            heappushpop(f_heap[x][y], candidate)
     # scan in reversed order
     else:
         for i in range(column+row-2,-1,-1):
@@ -236,55 +265,83 @@ def propagation_and_random_search_k(source_patches, target_patches,
                 bottom_neighbor_index[:,1] = temp
 
                 # initialize source image and target image index for density calculation
-                source_window_index = np.stack((diagonal_index, bottom_neighbor_index, right_neighbor_index), axis = 1)
-                window_f = new_f[source_window_index[:,:,0],source_window_index[:,:,1]]
+                source_window_index = np.stack((diagonal_index, bottom_neighbor_index, right_neighbor_index), axis = 1).reshape(1,diagonal_length,3,2)
+                source_window_index = np.repeat(source_window_index, offset_num, axis = 0)
+                
+
+                window_f = np.empty((offset_num,diagonal_length,3,2)).astype('int64')
+                for j in range(diagonal_length):
+                    for k in range(3):
+                        x = source_window_index[0,j,k,0]
+                        y = source_window_index[0,j,k,1]
+                        for l in range(offset_num):
+                            window_f[l,j,k] = f_heap[x][y][l][-1]
                 target_window_index = source_window_index + window_f
 
                 # clip the index afte adding offset to its boundaries
-                target_window_x = np.clip(target_window_index[:,:,0],0,row-1)
-                target_window_y = np.clip(target_window_index[:,:,1],0,column-1)
-                source_window = source_patches[source_window_index[:,:,0],source_window_index[:,:,1]]
+                target_window_x = np.clip(target_window_index[:,:,:,0],0,row-1)
+                target_window_y = np.clip(target_window_index[:,:,:,1],0,column-1)
+                source_window = source_patches[source_window_index[:,:,:,0],source_window_index[:,:,:,1]]
                 target_window = target_patches[target_window_x,target_window_y]
 
                 # calculate the difference in density of those pixels
-                window_D = np.sum(np.sum((target_window - source_window)**2, axis = 3), axis = 2)
-                
-                # update the offset per pixel if better result is found
-                min_index = np.argmin(window_D,axis=1)
-                x = source_window_index[:,0,0]
-                y = source_window_index[:,0,1]
-                new_f[x, y] = window_f[np.arange(diagonal_length),min_index]
+                window_D = np.sum(np.sum((target_window - source_window)**2, axis = 4), axis = 3)
+               
+                for l in range(diagonal_length):
+                    x = diagonal_index[l,0]
+                    y = diagonal_index[l,1]
+                    for m in range(3):
+                      for n in range(offset_num):
+                        candidate = (window_D[n,l,m] * -1, _tiebreaker.next(), window_f[n,l,m])
+                        if tuple(window_f[n,l,m]) not in f_coord_dictionary[x][y]:
+                            f_coord_dictionary[x][y][tuple(window_f[n,l,m])] = 0
+                            heappushpop(f_heap[x][y], candidate)
 
             # Random Search
-            if random_enabled:
+            if False:
                 # store search radius in array_for_random_offset, first spot is center of the search region 
                 j = 1
                 while(j < while_iters+1):
-                        cur_R = np.array([random.uniform(-1, 1), random.uniform(-1, 1)])
+                        cur_R = np.array([np.random.uniform(-1, 1), np.random.uniform(-1, 1)])
                         array_for_random_offset[0,j,:] = w * alpha ** j * cur_R
                         j +=1
                         
                 # populate the offset array for comparison
-                source_window_index = np.repeat(diagonal_index.reshape(diagonal_length,1,2), while_iters+1, axis = 1)
-                random_offset = np.repeat(array_for_random_offset, diagonal_length, axis=0)          
-                window_f = random_offset + new_f[source_window_index[:,:,0],source_window_index[:,:,1]]
+                source_window_index = np.repeat(diagonal_index.reshape(diagonal_length,1,2), while_iters+1, axis = 1).reshape(1,diagonal_length,while_iters+1,2)
+                source_window_index = np.repeat(source_window_index, offset_num, axis = 0)
+                random_offset = np.repeat(array_for_random_offset, diagonal_length, axis=0).reshape(1,diagonal_length,while_iters+1,2)
+                random_offset = np.repeat(random_offset, offset_num, axis = 0)
+ 
+
+                window_f = np.empty((offset_num,diagonal_length,while_iters+1,2)).astype('int64')
+                for j in range(diagonal_length):
+                    for k in range(while_iters+1):
+                        x = source_window_index[0,j,k,0]
+                        y = source_window_index[0,j,k,1]
+                        for l in range(offset_num):
+                            window_f[l,j,k] = f_heap[x][y][l][-1]
+                target_window_index = source_window_index + window_f
+
                 # clip the index afte adding offset to its boundaries
-                target_window_x = np.clip((source_window_index + window_f)[:,:,0],0,row-1)
-                target_window_y = np.clip((source_window_index + window_f)[:,:,1],0,column-1)
+                target_window_x = np.clip((source_window_index + window_f)[:,:,:,0],0,row-1)
+                target_window_y = np.clip((source_window_index + window_f)[:,:,:,1],0,column-1)
                 # correct the offset array such that after adding offset no pixels will potentially cross the 
                 # boundaries
-                window_f[:,:,0] = target_window_x - source_window_index[:,:,0]
-                window_f[:,:,1] = target_window_y - source_window_index[:,:,1]
-                source_window = source_patches[source_window_index[:,:,0],source_window_index[:,:,1]]
+                window_f[:,:,:,0] = target_window_x - source_window_index[:,:,:,0]
+                window_f[:,:,:,1] = target_window_y - source_window_index[:,:,:,1]
+                source_window = source_patches[source_window_index[:,:,:,0],source_window_index[:,:,:,1]]
                 target_window = target_patches[target_window_x,target_window_y]
                 # calculate the difference in density of those pixels
-                window_D = np.sum(np.sum((target_window - source_window)**2, axis = 3), axis = 2)
-                # update the offset per pixel if better result is found
-                min_index = np.argmin(window_D,axis=1)
-                x = source_window_index[:,0,0]
-                y = source_window_index[:,0,1]
-                new_f[x, y] = window_f[np.arange(diagonal_length),min_index]
-
+                window_D = np.sum(np.sum((target_window - source_window)**2, axis = 4), axis = 3)
+                for l in range(diagonal_length):
+                    x = diagonal_index[l,0]
+                    y = diagonal_index[l,1]
+                    for m in range(while_iters+1):
+                      for n in range(offset_num):
+                        candidate = (window_D[n,l,m] * -1, _tiebreaker.next(), window_f[n,l,m])
+                        if tuple(window_f[n,l,m]) not in f_coord_dictionary[x][y]:
+                            f_coord_dictionary[x][y][tuple(window_f[n,l,m])] = 0
+                            heappushpop(f_heap[x][y], candidate)
     #############################################
 
     return global_vars
@@ -349,10 +406,8 @@ def NNF_matrix_to_NNF_heap(source_patches, target_patches, f_k):
             for k in range(offset_num):
                 displacement = f_k[k][i][j]
                 source_patch = source_patches[i][j]
-                target_x = np.clip(i + displacement[0], 0, row-1)
-                target_y = np.clip(j + displacement[1], 0, column-1)
-                target_patch = target_patches[target_x][target_y]
-                priority = -np.sum((target_patch-source_patch)**(2))
+                target_patch = target_patches[i + displacement[0], j + displacement[1]]
+                priority = -np.sum(np.sum((target_patch - source_patch)**2, axis=1), axis = 0)
                 counter = _tiebreaker.next()
                 heappush(temp_heap, (priority, counter, displacement))
                 temp_dic[tuple(displacement)] = 0
@@ -383,16 +438,16 @@ def NNF_heap_to_NNF_matrix(f_heap):
     #############################################
     ###  PLACE YOUR CODE BETWEEN THESE LINES  ###
     #############################################
-    row = len(fheap)
-    column = len(fheap[0])
+    row = len(f_heap)
+    column = len(f_heap[0])
     offset_num = len(f_heap[0][0])
-    f_k = np.empty((offset_num, row, column, 2))
-    D_k = np.empty((offset_num, row, column))
+    f_k = np.empty((offset_num, row, column, 2)).astype('int64')
+    D_k = np.empty((offset_num, row, column)).astype('int64')
     for i in range(row):
         for j in range(column):
             for k in range(offset_num):
-                f_k[i,j,k] = nlargest(k+1, f_heap[i][j])[k][-1]
-                D_k[i,j,k] = (-1) * (nlargest(k+1, f_heap[i][j])[k][0])
+                f_k[k,i,j] = nlargest(k+1, f_heap[i][j])[k][-1]
+                D_k[k,i,j] = (-1) * (nlargest(k+1, f_heap[i][j])[k][0])
     #############################################
     return f_k, D_k
 
@@ -401,13 +456,23 @@ def nlm(target, f_heap, h):
 
 
     # this is a dummy statement to return the image given as input
-    #denoised = target
+    # denoised = target
 
     #############################################
     ###  PLACE YOUR CODE BETWEEN THESE LINES  ###
     #############################################
-
-
+    f_k, D_k = NNF_heap_to_NNF_matrix(f_heap)
+    f_k = f_k + make_coordinates_matrix(target.shape[0:2])
+    x = np.clip(f_k[:,:,:,0],0,target.shape[0]-1)
+    y = np.clip(f_k[:,:,:,1],0,target.shape[1]-1)
+    rec_source = target[x, y]
+    g = (-1) * D_k/(h**2)
+    h = np.exp(g)
+    i = np.sum(h, axis = 0)
+    j = h/i
+    for m in range(3):
+        rec_source[:,:,:,m] = rec_source[:,:,:,m] * j
+    denoised = rec_source
     #############################################
 
     return denoised
