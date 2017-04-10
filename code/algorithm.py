@@ -185,7 +185,7 @@ def propagation_and_random_search_k(source_patches, target_patches,
                             heappushpop(f_heap[x][y], candidate)
 
             # Random Search
-            if False:
+            if random_enabled:
                 # store search radius in array_for_random_offset, first spot is center of the search region 
                 j = 1
                 while(j < while_iters+1):
@@ -207,11 +207,12 @@ def propagation_and_random_search_k(source_patches, target_patches,
                         x = source_window_index[0,j,k,0]
                         y = source_window_index[0,j,k,1]
                         for l in range(offset_num):
-                            window_f[l,j,k] = f_heap[x][y][l][-1]
+                            window_f[l,j,k] = f_heap[x][y][l][-1] + random_offset[l,j,k]
+                target_window_index = source_window_index + window_f
 
                 # clip the index afte adding offset to its boundaries
-                target_window_x = np.clip((source_window_index + window_f)[:,:,:,0],0,row-1)
-                target_window_y = np.clip((source_window_index + window_f)[:,:,:,1],0,column-1)
+                target_window_x = np.clip(target_window_index[:,:,:,0],0,row-1)
+                target_window_y = np.clip(target_window_index[:,:,:,1],0,column-1)
                 # correct the offset array such that after adding offset no pixels will potentially cross the 
                 # boundaries
                 window_f[:,:,:,0] = target_window_x - source_window_index[:,:,:,0]
@@ -298,7 +299,7 @@ def propagation_and_random_search_k(source_patches, target_patches,
                             heappushpop(f_heap[x][y], candidate)
 
             # Random Search
-            if False:
+            if random_enabled:
                 # store search radius in array_for_random_offset, first spot is center of the search region 
                 j = 1
                 while(j < while_iters+1):
@@ -319,12 +320,12 @@ def propagation_and_random_search_k(source_patches, target_patches,
                         x = source_window_index[0,j,k,0]
                         y = source_window_index[0,j,k,1]
                         for l in range(offset_num):
-                            window_f[l,j,k] = f_heap[x][y][l][-1]
+                            window_f[l,j,k] = f_heap[x][y][l][-1] + random_offset[l,j,k]
                 target_window_index = source_window_index + window_f
 
                 # clip the index afte adding offset to its boundaries
-                target_window_x = np.clip((source_window_index + window_f)[:,:,:,0],0,row-1)
-                target_window_y = np.clip((source_window_index + window_f)[:,:,:,1],0,column-1)
+                target_window_x = np.clip(target_window_index[:,:,:,0],0,row-1)
+                target_window_y = np.clip(target_window_index[:,:,:,1],0,column-1)
                 # correct the offset array such that after adding offset no pixels will potentially cross the 
                 # boundaries
                 window_f[:,:,:,0] = target_window_x - source_window_index[:,:,:,0]
@@ -466,13 +467,13 @@ def nlm(target, f_heap, h):
     x = np.clip(f_k[:,:,:,0],0,target.shape[0]-1)
     y = np.clip(f_k[:,:,:,1],0,target.shape[1]-1)
     rec_source = target[x, y]
-    g = (-1) * D_k/(h**2)
+    g = (-1) * (np.sqrt(D_k)/(h**2))
     h = np.exp(g)
     i = np.sum(h, axis = 0)
     j = h/i
     for m in range(3):
         rec_source[:,:,:,m] = rec_source[:,:,:,m] * j
-    denoised = rec_source
+    denoised = np.sum(rec_source, axis = 0)
     #############################################
 
     return denoised
